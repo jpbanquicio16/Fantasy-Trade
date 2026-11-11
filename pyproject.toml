@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trade"
+version = "0.1.0"
+description = "Trade recommender for Sleeper Lock-In fantasy basketball: whole-league simulation before and after every offer"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "waiver",            # scoring engine, projections, scenario sampler, snapshots (../waiver-bot)
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "polars>=1.0",
+    "pydantic>=2.6",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6.100"]
+
+[project.scripts]
+trade = "trade.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120

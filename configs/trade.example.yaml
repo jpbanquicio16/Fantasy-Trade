@@ -1,0 +1,37 @@
+# Copy to configs/trade.yaml (git-ignored). League facts come from the Sleeper league object at run
+# time (via ../waiver-bot's league.yaml for league_id / my_roster_id); this file holds only choices
+# and the rules the API does not state.
+objective: points                 # points | top6 | title  (design section 3: points is the MVP default)
+
+scenarios:
+  shortlist: 1000                 # scenarios for screening-to-simulation
+  finalist: 2000                  # fresh scenarios for the finalists (no selection bias)
+  planning: 300                   # planning sample for the lock-aware policy (current week only)
+
+search:
+  shortlist_size: 40
+  finalists: 12
+  per_partner: 10
+  partner_loss_tolerance_fp: 3.0  # screened loss per week a partner may take (unless the market likes it)
+  fa_candidates: 6                # free agents tried for a freed roster spot in simulation
+  drop_candidates: 3              # least valuable players tried for a required drop
+  shapes: ["1-1", "2-1", "1-2", "2-2"]
+
+bar:                              # an offer qualifies only if all three hold (section 7)
+  min_gain: 0.5                   # FP a week for objective=points; percentage points for top6 / title
+  min_gain_prob_points: 1.0
+  se_fraction: 0.3333             # paired SE must be below this fraction of the gain
+  require_p10_positive: true
+
+cards:
+  max_cards: 5
+  max_per_partner: 2
+
+rules:                            # open questions from sections 1-2; each is a switch
+  traded_player_week_rule: next_week_if_played   # or: immediate  (blends the trade week by games left)
+  pending_score_on_trade: forfeited_unless_locked
+  assume_accepted_in_days: 0      # when you expect the other manager to accept
+  ties_go_to: higher_seed
+
+finalist_policy: shortlist        # shortlist | v2 (lineup design's lock-aware policy for you and the partner)
+seed: null                        # null = derived from the snapshot id (reproducible)
