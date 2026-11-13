@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copy to ~/Library/LaunchAgents/, replace REPO_PATH, then:
+     launchctl load ~/Library/LaunchAgents/com.trade.nightly.plist
+     Runs at 23:45 local time (Adelaide: after the US-evening games and after the waiver bot's 23:30 snapshot). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.trade.nightly</string>
+  <key>ProgramArguments</key><array><string>REPO_PATH/scripts/nightly.sh</string></array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>45</integer></dict>
+  <key>StandardErrorPath</key><string>/tmp/trade-nightly.err</string>
+</dict>
+</plist>

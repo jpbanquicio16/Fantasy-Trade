@@ -174,6 +174,8 @@ def waiver_screen(ctx, screen: Screen, rid: int) -> float:
 
 def screen_offers(ctx, screen: Screen, market, log=print) -> tuple[list[Row], dict]:
     """Enumerate, screen both sides, prune. Returns (shortlist rows, funnel statistics)."""
+    from trade.followup import complete  # local: followup imports this module
+
     cfg = ctx.tcfg.search
     me = ctx.snap.my_roster_id
     sizes = {s for sh in cfg.shapes for s in map(int, sh.split("-"))}
@@ -207,7 +209,7 @@ def screen_offers(ctx, screen: Screen, market, log=print) -> tuple[list[Row], di
                     if my_gain <= waiver_bar:
                         continue
                     stats["beats_waiver"] += 1
-                    s_th = screen.settle(pr, r, g)
+                    s_th = complete(screen, pr, r, g, exclude=set(s_me[1].adds))  # his follow-up move included
                     if s_th is None:
                         continue
                     their = (s_th[0] - base_th) / screen.H

@@ -19,7 +19,13 @@ Status against *Sleeper Lock-In Trade Recommender - Technical Design* (11 Nov 20
 | §7 tiers, bar, no-trade | `market.tier`, `recommend.passes_bar`, `cards.render` | Bar: gain, SE under a third, 10th percentile above zero. Near-miss shown when nothing qualifies. |
 | §10 sensitivity | `recommend.fill_finalist` | Other reading of the trade-week rule, weak management for the other ten teams, partner-held-fixed (rival effect), reversal point for the incoming players' output, free agent lost. |
 | §9 logging | `store.py` | recommendations, proposals, responses; observed acceptance per tier. |
+| §7 trades for a player you name | `targeted.py`, `trade target` | Acquire / move / free-agent modes; accent- and suffix-insensitive name matching with an ambiguity prompt; offers up to 3-for-2 (acquire) and 2-for-2 (move); each side's best single follow-up drop-and-add (two sides never claim the same free agent); screened trade-off front plus best 8 per shape, up to 80 simulated; price-list candidates re-run on fresh scenarios; protect / max-send / shapes / teams options; CSV of every simulated offer. |
 | §10 correctness tests | `tests/test_core.py` | Stopping premiums match the lineup design (0.40, 0.63), null trade is exactly zero, unrelated teams' weekly scores unchanged, trade-week rule, bench cover, settle legality, bracket and seeding, timing, tiers. |
+
+| §7 when a manager asks for one of your players | `interest.py`, `trade inbound` | Judges his entered offer with the same paired simulation; three counter kinds (ask for one more, swap the piece, add one of yours for an upgrade), screened then simulated; counters ranked by smallest market concession; full search of every deal with him (1-3 of his players, up to `--max-extra` more of yours); "keep him" when nothing clears the bar; stale offers rejected; request logged in `proposals` with him as sender. Deviation: his offer is entered as player names on the command line (Sleeper exposes no proposals). |
+| §7 trade-off chart | `chart.py` | Dependency-free SVG written beside the CSV by `trade target`: your gain vs the owner's, the bar, the front highlighted. |
+| §7 follow-up moves and one claim per free agent, whole-league | `followup.py`, `search.screen_offers`, `recommend.recommend` | Both sides' best drop-and-add is in the screen (partner) and the simulation (you); two sides never claim the same free agent. Shared with `target`. |
+| §8 cards and nightly run | `app/streamlit_app.py` (`trade app`), `trade nightly`, `scripts/nightly.sh`, `scripts/com.trade.nightly.plist` | Cards read from the SQLite log; "I proposed this" logs a proposal. The app is untested beyond the `store.stored_cards` reader. |
 
 ## Deviations (and why)
 
@@ -40,7 +46,7 @@ Status against *Sleeper Lock-In Trade Recommender - Technical Design* (11 Nov 20
 * **Weekly shadow replay** of unmade recommendations (the logging exists; the counterfactual scorer does not).
 * **Injury-hazard halved/doubled** sensitivity, **market-informed vs market-independent projection** ablation
   (§6), model-uncertainty draws beyond the sampler's batches (30 in the design).
-* **Streamlit cards**; **nightly scheduling**; **DuckDB/Parquet and `known_at` bitemporal tables** (the waiver
+* **DuckDB/Parquet and `known_at` bitemporal tables** (the waiver
   core's snapshots stand in; the perturbation test is not ported).
 * **LightGBM, PyMC, hierarchical acceptance model, beam search, news extraction**: deferred or excluded by the design.
 * **Three-team and 3-for-3 trades**, **draft-pick trading**: out of scope by the design.

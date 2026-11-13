@@ -29,6 +29,10 @@ cp configs/trade.example.yaml configs/trade.yaml
 | --- | --- |
 | `trade settings` | Slots, IL, deadline, review period, playoff weeks, bracket, seeding - read from the API, with open items marked |
 | `trade recommend` | Enumerate, screen, prune, simulate the shortlist, re-evaluate finalists on fresh scenarios, print cards |
+| `trade target PLAYER` | Offers for one player you name: *acquire* him if another manager owns him, *move* him if you do. Price list by offer shape, your-gain vs owner-gain front, cards |
+| `trade inbound MANAGER PLAYER` | A league-mate asked for one of your players: judges his offer (`--offer NAME...`), builds counters close to it, searches every deal with him, or says keep him. Logs his request as a proposal |
+| `trade nightly` | Refresh, search, store, write `data/reports/latest.txt` (schedule with `scripts/nightly.sh` / the launchd plist) |
+| `trade app` | Streamlit cards from the stored recommendation (`pip install -e ".[app]"`) |
 | `trade propose REC OFFER` | Log that you sent an offer (the only acceptance labels that can exist) |
 | `trade respond ID accepted\|rejected\|countered\|expired\|withdrawn` | Log what happened |
 | `trade log` | Proposals, responses, observed acceptance per tier |
@@ -36,6 +40,19 @@ cp configs/trade.example.yaml configs/trade.yaml
 Options for `recommend`: `--objective points|top6|title`, `--partner ROSTER_ID`, `--shapes 1-1,2-1,1-2,2-2`,
 `--scenarios N`, `--finalist-scenarios N`, `--policy shortlist|v2`, `--rule next_week_if_played|immediate`,
 `--no-refresh`, `--json`. Defaults live in `configs/trade.yaml`.
+
+`trade target` options: `--protect NAME...` (never given up), `--max-send N` (default 3), `--shapes give-get,...`
+(acquire default `1-1,2-1,3-1,1-2,2-2,3-2`; move default `1-1,2-1,1-2,2-2`), `--teams IDS` (move mode),
+plus the `recommend` options. Names ignore accents, suffixes and punctuation; an ambiguous name lists ids to
+rerun with. A free agent needs no trade and prints the drop a claim would pair with. All simulated offers are
+written to `data/reports/target_*.csv`, with the trade-off chart as a matching `.svg`; the printed recommendation id works with `trade propose`.
+
+`trade inbound` options: `--offer` (players he offered; omit if none), `--protect NAME...` (never added to a counter),
+`--max-extra N` (extra players of yours in a counter or deal, default 1), `--counters-only`, `--no-log`, `--note`,
+plus the `recommend` options. `MANAGER` is a roster id or part of his display name. Counters that clear your bar and are
+not in the *unlikely* tier are ordered by the smallest concession asked of him in market terms. His request is logged in
+`proposals` with his roster as sender; record your answer with `trade respond ID ...`. An offer naming a player no longer on
+either roster is rejected as stale.
 
 ## Reading a card
 
@@ -62,6 +79,8 @@ src/trade/
   search.py      offers, roster settling (IL, drops, adds), deterministic screen, pruning, dominance
   evaluate.py    paired both-side evaluation, G(T), waiver-only baseline
   market.py      market-perceived value and the compatibility tier
+  interest.py    inbound mode: judge his offer, counters near it, full search with him
+  targeted.py    named-player mode: find, enumerate, follow-up moves, front, price list
   recommend.py   the pipeline, bar, sensitivity runs
   cards.py       text cards and the "no worthwhile trade" report
   store.py       SQLite log: recommendations, proposals, responses

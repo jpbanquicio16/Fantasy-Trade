@@ -15,6 +15,7 @@ from trade import __version__
 from trade.config import TradeConfig
 from trade.context import Context, World, build_context
 from trade.evaluate import OBJ_KEY, Choice, Est, Evaluator, Result, best_alt
+from trade.followup import resolve_claims, try_follow_up
 from trade.format import effective_date, first_new_week, processing_time
 from trade.market import Market, build_market, tier
 from trade.search import Offer, Screen, Settled, screen_offers
@@ -103,21 +104,28 @@ def passes_bar(g: Est, cfg: TradeConfig, objective: str) -> tuple[bool, str]:
     return True, ""
 
 
+def trade_timing(ctx: Context, tcfg: TradeConfig) -> tuple[dict, object]:
+    """When a trade proposed today would process and the first week it counts (section 2)."""
+    from waiver.config import ET, load_league
+
+    snap, fmt = ctx.snap, ctx.fmt
+    today = snap.taken_at.astimezone(ET).date()
+    eff = effective_date(today, fmt.review_days, tcfg.rules.assume_accepted_in_days)
+    week_dates = {w: snap.week_dates(w) for w in sorted({g.week for g in snap.schedule})}
+    fw, frac = first_new_week(week_dates, eff, snap.week, tcfg.rules.traded_player_week_rule)
+    return {"effective_date": eff, "first_week": fw, "frac": frac,
+            "process_at": processing_time(eff, load_league().display_tz), "today": today,
+            "deadline_week": fmt.trade_deadline_week, "review_days": fmt.review_days}, today
+
+
 def recommend(tcfg: TradeConfig, objective: str | None = None, partner: int | None = None, refresh: bool = True,
               ctx: Context | None = None, log=print) -> Recommendation:
     t0 = time.monotonic()
     objective = objective or tcfg.objective
     ctx = ctx or build_context(tcfg, refresh, log)
     snap, fmt = ctx.snap, ctx.fmt
-    from waiver.config import ET, load_league
-
-    today = snap.taken_at.astimezone(ET).date()
-    eff = effective_date(today, fmt.review_days, tcfg.rules.assume_accepted_in_days)
-    week_dates = {w: snap.week_dates(w) for w in sorted({g.week for g in snap.schedule})}
-    fw, frac = first_new_week(week_dates, eff, snap.week, tcfg.rules.traded_player_week_rule)
-    timing = {"effective_date": eff, "first_week": fw, "frac": frac,
-              "process_at": processing_time(eff, load_league().display_tz), "today": today,
-              "deadline_week": fmt.trade_deadline_week, "review_days": fmt.review_days}
+    timing, today = trade_timing(ctx, tcfg)
+    fw, frac = timing["first_week"], timing["frac"]
     if fmt.trade_deadline_week and fw > fmt.trade_deadline_week:
         ctx.flags.append(f"past_trade_deadline:week_{fw}>{fmt.trade_deadline_week}")
         return Recommendation(ctx, objective, [], [], {"blocked": "trade deadline"}, Market(), timing, 0, 0,
@@ -141,8 +149,9 @@ def recommend(tcfg: TradeConfig, objective: str | None = None, partner: int | No
     log(f"simulating {len(short)} shortlisted offers ... [{time.monotonic() - t0:.0f}s]")
     scored: list[Finalist] = []
     for row in short:
-        ch, _ = select_choice(ev, screen, row, objective, tcfg, alt)
-        r = ev.run(ch, objective)
+        ch, v = select_choice(ev, screen, row, objective, tcfg, alt)
+        ch, r = try_follow_up(ev, screen, ch, v, objective, set(row.offer.get))
+        ch, r = resolve_claims(ev, screen, ch, r, objective)
         scored.append(Finalist(ch, row, row.market_change or 0.0, float(r.g.mean())))
     scored.sort(key=lambda f: -f.g_sel)
     fin = scored[: tcfg.search.finalists]

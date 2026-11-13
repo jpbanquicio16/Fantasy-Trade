@@ -242,3 +242,236 @@ def test_rank_curve_is_monotone():
     rank = np.arange(1, 200.0)
     a, b = fit_rank_curve(rank, 40 - 5 * np.log(rank) + np.random.default_rng(0).normal(0, 2, rank.size))
     assert b < 0
+
+
+# --- named-player mode (design section 7) ---------------------------------------------------
+NAMES = {"1": "Nikola Jokić", "2": "Jaren Jackson Jr.", "3": "Jalen Williams", "4": "Jaylin Williams",
+         "5": "Gary Payton II", "6": "P.J. Washington"}
+
+
+def test_name_matching_ignores_accents_suffixes_and_punctuation():
+    from trade.targeted import find_players
+
+    assert find_players(NAMES, "nikola jokic") == ["1"]
+    assert find_players(NAMES, "Jaren Jackson") == ["2"]
+    assert find_players(NAMES, "gary payton") == ["5"]
+    assert find_players(NAMES, "PJ Washington") == ["6"]
+    assert find_players(NAMES, "p.j. washington") == ["6"]
+    assert find_players(NAMES, "williams") == ["3", "4"]  # ambiguous: the caller must ask which
+    assert find_players(NAMES, "4") == ["4"]  # a player id
+    assert find_players(NAMES, "nobody here") == []
+
+
+def test_enumerate_acquire_and_move_shapes():
+    from trade.targeted import TargetConstraints, enumerate_offers
+
+    mine = [f"m{i}" for i in range(6)]
+    owner = {5: ["T", "a", "b", "c"]}
+    offers = list(enumerate_offers("acquire", "T", mine, owner, TargetConstraints()))
+    assert all("T" in o.get and o.partner == 5 for o in offers)
+    from math import comb
+    assert len(offers) == sum(comb(6, k) for k in (1, 2, 3)) * (1 + 3)  # give 1-3, get him alone or with one of 3
+    assert {o.shape for o in offers} == {"1-1", "2-1", "3-1", "1-2", "2-2", "3-2"}
+    protected = list(enumerate_offers("acquire", "T", mine, owner, TargetConstraints(protect={"m0"}, max_send=2)))
+    assert protected and all("m0" not in o.give and len(o.give) <= 2 for o in protected)
+    assert {o.shape for o in enumerate_offers("acquire", "T", mine, owner, TargetConstraints(shapes=["2-1"]))} == {"2-1"}
+
+    mine_t = mine + ["T"]
+    teams = {2: ["x", "y", "z"], 3: ["u", "v"]}
+    mv = list(enumerate_offers("move", "T", mine_t, teams, TargetConstraints()))
+    assert all("T" in o.give for o in mv)
+    assert len(mv) == (1 + 6) * (3 + 3 + 2 + 1)  # him alone or with one of 6; 1-2 players from either team
+    assert {o.partner for o in enumerate_offers("move", "T", mine_t, teams, TargetConstraints(teams={3}))} == {3}
+    assert not any(len(o.give) > 1 for o in enumerate_offers("move", "T", mine_t, teams, TargetConstraints(max_send=1)))
+
+
+def test_pareto_and_shortlist_keep_the_front_and_each_shape():
+    from trade.search import Offer, Row
+    from trade.targeted import pareto, pick_shortlist
+
+    assert pareto([(5, 0), (4, 1), (3, 0.5), (2, 3), (1, 2)]) == [0, 1, 3]
+    rows = [Row(Offer(2, tuple(f"g{i}" for _ in range(1 + i % 2)), ("T",)), 10 - i, -float(i) * 0.1)
+            for i in range(10)]
+    short = pick_shortlist(rows, limit=80, per_shape=1)
+    shapes = {r.offer.shape for r in short}
+    assert shapes == {"1-1", "2-1"}
+    assert rows[0] in short and len(pick_shortlist(rows, limit=2, per_shape=8)) == 2
+
+
+def test_follow_up_applies_only_a_gain_and_never_cuts_incoming_or_added_players():
+    from trade.search import Settled
+    from trade.targeted import follow_up
+
+    value = {"a": 5.0, "b": 1.0, "c": 3.0, "new": 4.0, "fa": 2.5, "fa2": 0.5}
+    screen = SimpleNamespace(value=lambda pids: sum(value[p] for p in pids),
+                             lowest=lambda pool, k: sorted(pool, key=lambda p: value[p])[:k],
+                             fa_screen=["fa", "fa2"])
+    s = Settled(["a", "b", "c", "new"], [], [], [])
+    v, s2 = follow_up(screen, s, {"new"})
+    assert s2.drops == ["b"] and s2.adds == ["fa"] and v == 5 + 3 + 4 + 2.5  # swaps the worst player for the best free agent
+    assert "new" in s2.pids
+    keep_all = Settled(["a", "new"], [], [], [])
+    v, s3 = follow_up(screen, keep_all, {"a", "new"})
+    assert s3 is keep_all  # nobody droppable: holds
+    worse = SimpleNamespace(value=screen.value, lowest=screen.lowest, fa_screen=["fa2"])
+    _, s4 = follow_up(worse, Settled(["a", "c", "b"], [], [], []), set())
+    assert s4.adds == []  # 0.5 does not beat the 1.0 he would drop
+
+
+def test_price_list_picks_best_qualifying_offer_per_shape_and_the_smallest_owner_loss():
+    from trade.evaluate import Est
+    from trade.search import Offer
+    from trade.targeted import build_price_list, choose_finalists
+
+    def fin(shape, partner, g, them, qual=True, tr="Plausible on reputation"):
+        a, b = map(int, shape.split("-"))
+        o = Offer(partner, tuple(f"g{i}" for i in range(a)), tuple(f"t{i}" for i in range(b)))
+        e = lambda m: Est(m, 0.1, m - 0.2, m + 0.2)  # noqa: E731
+        return SimpleNamespace(choice=SimpleNamespace(offer=o), qualifies=qual, tier=tr, g=e(g),
+                               them={"pts": e(them)}, g_sel=g, extra={"them_sel": them, "tier_sel": tr})
+
+    fs = [fin("1-1", 2, 0.6, -2.0), fin("1-1", 3, 0.9, -3.0), fin("2-1", 2, 5.0, -9.0), fin("2-1", 4, 2.0, +1.0,
+          tr="Looks good for both"), fin("3-1", 2, 7.0, -8.0, qual=False), fin("1-2", 2, 3.0, -1.0, tr="Unlikely")]
+    price = build_price_list(fs)
+    labels = [p.label for p in price]
+    assert labels == ["1-1", "2-1", "Smallest owner loss"]  # 3-1 fails the bar; 1-2 owner is 'unlikely'
+    assert price[0].f.g.mean == 0.9 and price[1].f.g.mean == 5.0
+    assert price[2].f.them["pts"].mean == 1.0
+    picked = choose_finalists(fs, bar=0.5, per_shape=1, kind=1)
+    assert len(picked) == len({p.choice.offer.id for p in picked})
+
+
+def test_two_sides_cannot_claim_the_same_free_agent():
+    from trade.search import Settled
+    from trade.targeted import follow_up
+
+    value = {"a": 5.0, "b": 1.0, "fa": 2.5, "fb": 2.0}
+    screen = SimpleNamespace(value=lambda pids: sum(value[p] for p in pids),
+                             lowest=lambda pool, k: sorted(pool, key=lambda p: value[p])[:k], fa_screen=["fa", "fb"])
+    _, s = follow_up(screen, Settled(["a", "b"], [], [], []), set(), exclude={"fa"})
+    assert s.adds == ["fb"]
+
+
+def test_tradeoff_chart_is_valid_svg_with_front_and_bar():
+    import xml.etree.ElementTree as ET
+
+    from trade.chart import tradeoff_svg
+
+    sims = [{"offer_id": f"o{i}", "label": f"A & B {i}", "your_gain": 0.3 * i, "their_pts": 2.0 - i, "tier": "Needs a case"}
+            for i in range(6)]
+    svg = tradeoff_svg(sims, sims[:2], 0.5, "Offers for <X>")
+    root = ET.fromstring(svg)  # well-formed, labels escaped
+    assert root.tag.endswith("svg")
+    assert svg.count('r="5"') == 2 + 1 and svg.count('r="3"') == 4  # front dots (+1 legend), the rest
+    assert "your bar 0.5" in svg
+    assert tradeoff_svg([], [], 0.5, "empty").startswith("<svg")
+
+
+def test_stored_cards_returns_qualifying_offers_best_first(tmp_path):
+    import json
+
+    from trade import store
+    from trade.config import Paths
+
+    paths = Paths(root=tmp_path)
+    mk = lambda i, g, q, t: {"offer_id": i, "qualifies": q, "tier": t, "g": {"mean": g}}  # noqa: E731
+    with store.connect(paths) as db:
+        db.execute("INSERT INTO recommendations VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                   ("r1", "2026-11-11", "s", "h", "v", 1, 10, "points",
+                    json.dumps([mk("a", 1.0, True, "Needs a case"), mk("b", 3.0, True, "Looks good for both"),
+                                mk("c", 9.0, False, "Needs a case"), mk("d", 8.0, True, "Unlikely")]), 0, "[]"))
+    got = store.stored_cards(paths)
+    assert [o["offer_id"] for o in got["cards"]] == ["b", "a"] and not got["no_trade"]
+    assert store.stored_cards(Paths(root=tmp_path / "x")) is None
+
+
+# --- inbound mode (a manager asks for one of your players) ----------------------------------
+def _inbound_fin(kind_tier, mc, g, qual=True):
+    from trade.evaluate import Est
+
+    return SimpleNamespace(qualifies=qual, tier=kind_tier, market_change=mc, g=Est(g, 0.1, g - 0.2, g + 0.2))
+
+
+def test_counters_stay_close_to_his_offer_and_never_use_protected_players():
+    from trade.interest import ASK_MORE, SWAP, UPGRADE, InterestConstraints, enumerate_counters
+
+    mine = ["P", "a", "b", "c"]
+    theirs = ["g1", "g2", "h1", "h2"]
+    cons = InterestConstraints(protect={"c"})
+    out = enumerate_counters(3, "P", ("g1",), mine, theirs, cons)
+    ids = [o.id for _, o in out]
+    assert len(ids) == len(set(ids))
+    assert Offer_id(3, ("P",), ("g1",)) not in ids  # his own offer is judged separately
+    kinds = {k for k, _ in out}
+    assert kinds == {ASK_MORE, SWAP, UPGRADE}
+    assert all("P" in o.give and "c" not in o.give for _, o in out)
+    assert all(len(o.give) == 1 or k == UPGRADE for k, o in out)
+    assert {o.get for k, o in out if k == ASK_MORE} == {("g1", "g2"), ("g1", "h1"), ("g1", "h2")}
+    assert all(o.get[0] != "g1" or len(o.get) == 2 or k == UPGRADE for k, o in out)
+    assert max(len(o.give) for _, o in out) == 2  # one extra player by default
+    more = enumerate_counters(3, "P", ("g1",), mine, theirs, InterestConstraints(max_extra=2))
+    assert max(len(o.give) for _, o in more) == 3
+
+
+def Offer_id(partner, give, get):
+    from trade.search import Offer
+
+    return Offer(partner, give, get).id
+
+
+def test_full_search_lists_every_deal_with_him_that_includes_your_player():
+    from math import comb
+
+    from trade.interest import InterestConstraints, enumerate_deals
+
+    mine, theirs = ["P", "a", "b", "c"], ["t1", "t2", "t3", "t4"]
+    deals = enumerate_deals(3, "P", mine, theirs, InterestConstraints(protect={"c"}))
+    assert all("P" in o.give and "c" not in o.give and o.partner == 3 for o in deals)
+    assert len(deals) == (1 + 2) * sum(comb(4, k) for k in (1, 2, 3))  # give P alone or with a/b; get 1-3 of his
+    assert len({o.id for o in deals}) == len(deals)
+
+
+def test_counters_rank_by_smallest_concession_and_skip_unlikely_or_failing_ones():
+    from trade.interest import ASK_MORE, FULL, SWAP, rank_counters
+
+    his_mc = 4.0  # his offer gives him +4 of market value
+    fs = [(ASK_MORE, _inbound_fin("Needs a case", 3.5, 1.0)),    # concession 0.5
+          (SWAP, _inbound_fin("Needs a case", 1.0, 3.0)),        # concession 3.0
+          (SWAP, _inbound_fin("Unlikely", 3.9, 5.0)),            # hidden
+          (ASK_MORE, _inbound_fin("Needs a case", 3.9, 5.0, qual=False)),  # fails your bar
+          (FULL, _inbound_fin("Needs a case", 4.0, 9.0))]        # a full-search deal is not a counter
+    ranked = rank_counters(his_mc, fs)
+    assert [f.g.mean for _, f in ranked] == [1.0, 3.0]
+
+
+def test_stale_or_mistyped_requests_are_rejected():
+    from trade.interest import InvalidRequest, resolve_partner, validate_request
+
+    players = {p: SimpleNamespace(name=p) for p in ("P", "g1", "gone")}
+    rosters = {1: SimpleNamespace(players=["P", "q"], owner_name="me"), 3: SimpleNamespace(players=["g1"], owner_name="Dana")}
+    ctx = SimpleNamespace(snap=SimpleNamespace(my_roster_id=1, rosters=rosters, players=players),
+                          elig={"P": 1, "g1": 1, "gone": 1}, proj={"P": 1, "g1": 1, "gone": 1})
+    validate_request(ctx, 3, "P", ("g1",))
+    for bad in ((3, "g1", ("g1",)), (3, "P", ("gone",)), (1, "P", ()), (9, "P", ())):
+        with pytest.raises(InvalidRequest):
+            validate_request(ctx, *bad)
+    assert resolve_partner(ctx, "3") == 3 and resolve_partner(ctx, "dan") == 3
+    with pytest.raises(InvalidRequest):
+        resolve_partner(ctx, "nobody")
+
+
+def test_inbound_request_is_logged_with_him_as_sender(tmp_path):
+    import json
+
+    from trade import store
+    from trade.config import Paths
+
+    paths = Paths(root=tmp_path)
+    offer = {"give_names": ["P"], "get_names": ["g1"], "tier": "Needs a case", "me": {"pts": {"mean": -0.9}},
+             "them": {"pts": {"mean": 4.7}}, "market_change": 1.2}
+    pid = store.log_inbound("in_x", partner=3, my_roster=1, offer=offer, note="asked in chat", paths=paths)
+    store.log_response(pid, "countered", counter="P for g1+g2", paths=paths)
+    with store.connect(paths) as db:
+        row = dict(db.execute("SELECT * FROM proposals WHERE proposal_id=?", (pid,)).fetchone())
+    assert row["from_roster"] == 3 and row["to_roster"] == 1 and json.loads(row["give"]) == ["P"]
+    assert row["note"].startswith("inbound")

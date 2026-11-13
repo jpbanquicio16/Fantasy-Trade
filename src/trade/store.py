@@ -82,6 +82,20 @@ def log_proposal(rec_id: str, offer_id: str, note: str = "", paths: Paths | None
         return int(cur.lastrowid)
 
 
+def log_inbound(rec_id: str, partner: int, my_roster: int, offer: dict, note: str = "",
+                paths: Paths | None = None) -> int:
+    """Log a request a league-mate sent you (``from_roster`` is his roster). ``offer`` is ``offer_json`` of
+    his offer; give/get are from your side. Your later answer goes in via ``log_response``."""
+    with connect(paths) as db:
+        cur = db.execute(
+            "INSERT INTO proposals(league_id,sent_at,from_roster,to_roster,give,get,rec_id,tier_shown,your_gain,"
+            "partner_gain,market_change,note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("", now(), partner, my_roster, json.dumps(offer["give_names"]), json.dumps(offer["get_names"]),
+             rec_id, offer["tier"], json.dumps(offer["me"]), json.dumps(offer["them"]), offer["market_change"],
+             ("inbound; " + note).strip("; ")))
+        return int(cur.lastrowid)
+
+
 def log_response(proposal_id: int, outcome: str, note: str = "", counter: str | None = None,
                  paths: Paths | None = None) -> None:
     with connect(paths) as db:
@@ -97,3 +111,18 @@ def tier_report(paths: Paths | None = None) -> list[dict]:
             "SELECT p.tier_shown t, COUNT(*) n, SUM(r.outcome='accepted') acc FROM proposals p "
             "LEFT JOIN responses r USING(proposal_id) GROUP BY p.tier_shown").fetchall()
     return [dict(r) for r in rows]
+
+
+def stored_cards(paths: Paths | None = None, rec_id: str | None = None) -> dict | None:
+    """The latest (or a named) stored recommendation with its qualifying offers, best first, for the app."""
+    with connect(paths) as db:
+        row = (db.execute("SELECT * FROM recommendations WHERE rec_id=?", (rec_id,)) if rec_id else
+               db.execute("SELECT * FROM recommendations ORDER BY created_at DESC LIMIT 1")).fetchone()
+    if row is None:
+        return None
+    offers = json.loads(row["offers"])
+    cards = sorted((o for o in offers if o["qualifies"] and o["tier"] != "Unlikely"),
+                   key=lambda o: -(o["g"]["mean"] if o["g"] else -1e9))
+    return {"rec_id": row["rec_id"], "created_at": row["created_at"], "objective": row["objective"],
+            "no_trade": bool(row["no_trade"]), "flags": json.loads(row["flags"] or "[]"),
+            "cards": cards, "all": offers}

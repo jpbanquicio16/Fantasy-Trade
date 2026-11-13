@@ -18,6 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+app = ["streamlit>=1.30"]
 dev = ["pytest>=8", "hypothesis>=6.100"]
 
 [project.scripts]
